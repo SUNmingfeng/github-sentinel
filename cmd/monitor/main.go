@@ -24,7 +24,7 @@ type GitHubSentinel struct {
 	repoService   *service.RepoService
 	scheduler     *scheduler.Scheduler
 	aggregator    *aggregator.Aggregator
-	subscriptions map[string]string // repo -> frequency
+	subscriptions map[string]bool // 订阅的仓库列表
 }
 
 func NewGitHubSentinel(token string) *GitHubSentinel {
@@ -39,28 +39,15 @@ func NewGitHubSentinel(token string) *GitHubSentinel {
 	sched := scheduler.NewScheduler(repoService)
 	agg := aggregator.NewAggregator()
 
-	sentinel := &GitHubSentinel{
+	return &GitHubSentinel{
 		ctx:           ctx,
 		cancel:        cancel,
 		githubClient:  githubClient,
 		repoService:   repoService,
 		scheduler:     sched,
 		aggregator:    agg,
-		subscriptions: make(map[string]string),
+		subscriptions: make(map[string]bool),
 	}
-
-	// 添加报告处理器
-	sched.AddReportHandler(sentinel.handleScheduledReport)
-
-	return sentinel
-}
-
-// 处理调度器生成的报告
-func (gs *GitHubSentinel) handleScheduledReport(repoName string, report string, eventsCount int) {
-	fmt.Printf("\n🔔 [Scheduled Report] %s\n", repoName)
-	fmt.Printf("   Events: %d | Time: %s\n", eventsCount, time.Now().Format("15:04:05"))
-	fmt.Printf("   Report saved to reports/ directory\n")
-	fmt.Print("\n> ") // 重新显示提示符
 }
 
 func (gs *GitHubSentinel) Start() {
@@ -156,7 +143,7 @@ func (gs *GitHubSentinel) startConsole() {
 }
 
 func (gs *GitHubSentinel) subscribe(repoName, frequency string) {
-	if _, exists := gs.subscriptions[repoName]; exists {
+	if gs.subscriptions[repoName] {
 		fmt.Printf("Already subscribed to %s\n", repoName)
 		return
 	}
@@ -169,30 +156,34 @@ func (gs *GitHubSentinel) subscribe(repoName, frequency string) {
 		return
 	}
 
+	// 添加到订阅列表
+	gs.subscriptions[repoName] = true
+
 	// 添加到调度器
 	switch frequency {
 	case "daily":
 		if err := gs.scheduler.AddDailyJob(repoName); err != nil {
 			fmt.Printf("Failed to add daily job: %v\n", err)
+			delete(gs.subscriptions, repoName)
 			return
 		}
 	case "weekly":
 		if err := gs.scheduler.AddWeeklyJob(repoName); err != nil {
 			fmt.Printf("Failed to add weekly job: %v\n", err)
+			delete(gs.subscriptions, repoName)
 			return
 		}
 	default:
 		fmt.Printf("Invalid frequency: %s. Use 'daily' or 'weekly'\n", frequency)
+		delete(gs.subscriptions, repoName)
 		return
 	}
 
-	// 添加到订阅列表
-	gs.subscriptions[repoName] = frequency
 	fmt.Printf("✓ Subscribed to %s (%s updates)\n", repoName, frequency)
 }
 
 func (gs *GitHubSentinel) unsubscribe(repoName string) {
-	if _, exists := gs.subscriptions[repoName]; !exists {
+	if !gs.subscriptions[repoName] {
 		fmt.Printf("Not subscribed to %s\n", repoName)
 		return
 	}
@@ -210,8 +201,8 @@ func (gs *GitHubSentinel) listSubscriptions() {
 
 	fmt.Println("\nActive subscriptions:")
 	fmt.Println("--------------------")
-	for repo, freq := range gs.subscriptions {
-		fmt.Printf("  • %s (%s)\n", repo, freq)
+	for repo := range gs.subscriptions {
+		fmt.Printf("  • %s\n", repo)
 	}
 	fmt.Printf("\nTotal: %d subscriptions\n", len(gs.subscriptions))
 }
@@ -232,10 +223,7 @@ func (gs *GitHubSentinel) fetchNow(repoName string, days int) {
 	fmt.Println("\n" + report)
 
 	// 保存到文件
-	reportsDir := "reports"
-	os.MkdirAll(reportsDir, 0755)
-	filename := fmt.Sprintf("%s/%s_%s.md",
-		reportsDir,
+	filename := fmt.Sprintf("%s_report_%s.md",
 		strings.ReplaceAll(repoName, "/", "_"),
 		time.Now().Format("20060102_150405"))
 
@@ -255,9 +243,6 @@ func (gs *GitHubSentinel) fetchAllNow(days int) {
 	fmt.Printf("Fetching updates for all %d subscriptions (last %d days)...\n",
 		len(gs.subscriptions), days)
 
-	reportsDir := "reports"
-	os.MkdirAll(reportsDir, 0755)
-
 	for repoName := range gs.subscriptions {
 		fmt.Printf("\n--- %s ---\n", repoName)
 		events, release, err := gs.repoService.FetchRepoUpdates(gs.ctx, repoName, days)
@@ -270,14 +255,13 @@ func (gs *GitHubSentinel) fetchAllNow(days int) {
 		fmt.Println(report)
 
 		// 保存报告
-		filename := fmt.Sprintf("%s/%s_%s.md",
-			reportsDir,
+		filename := fmt.Sprintf("%s_report_%s.md",
 			strings.ReplaceAll(repoName, "/", "_"),
 			time.Now().Format("20060102_150405"))
 		os.WriteFile(filename, []byte(report), 0644)
 	}
 
-	fmt.Println("\n✓ All reports generated and saved to reports/ directory")
+	fmt.Println("\n✓ All reports generated")
 }
 
 func (gs *GitHubSentinel) showStatus() {
@@ -290,8 +274,8 @@ func (gs *GitHubSentinel) showStatus() {
 
 	if len(gs.subscriptions) > 0 {
 		fmt.Println("\nMonitored Repositories:")
-		for repo, freq := range gs.subscriptions {
-			fmt.Printf("  • %s (%s)\n", repo, freq)
+		for repo := range gs.subscriptions {
+			fmt.Printf("  • %s\n", repo)
 		}
 	}
 }
@@ -321,8 +305,14 @@ func (gs *GitHubSentinel) printHelp() {
 	fmt.Println("  fetch langchain-ai/langchain 7")
 	fmt.Println("  fetch-all 3")
 	fmt.Println("  list")
-	fmt.Println("")
-	fmt.Println("Note: Scheduled reports are automatically saved to reports/ directory")
+}
+
+func parseRepoFullName(fullName string) (owner, repo string) {
+	parts := strings.Split(fullName, "/")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", fullName
 }
 
 func main() {
@@ -333,9 +323,6 @@ func main() {
 		fmt.Println("You can set it with: export GITHUB_TOKEN=your_token_here")
 		fmt.Println()
 	}
-
-	// 创建 reports 目录
-	os.MkdirAll("reports", 0755)
 
 	// 创建信号处理
 	sigChan := make(chan os.Signal, 1)
@@ -357,12 +344,4 @@ func main() {
 	fmt.Println("Type 'help' for available commands\n")
 
 	sentinel.Start()
-}
-
-func parseRepoFullName(fullName string) (owner, repo string) {
-	parts := strings.Split(fullName, "/")
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", fullName
 }

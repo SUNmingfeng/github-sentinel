@@ -1,3 +1,30 @@
+# configs/config.yaml
 app:
-name: github-sentinel
-port: 8080
+  name: github-sentinel
+  port: 8080
+  env: development
+
+github:
+  token: ${GITHUB_TOKEN}  # 从环境变量读取
+  api_url: https://api.github.com
+
+database:
+  driver: sqlite
+  dsn: data/github-sentinel.db
+
+scheduler:
+  daily: "0 9 * * *"    # 每天早上9点执行
+  weekly: "0 10 * * 1"  # 每周一早上10点执行
+
+notifier:
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    from: noreply@github-sentinel.com
+  slack:
+    enabled: false
+    webhook_url: ""
+  webhook:
+    enabled: false
+    url: ""

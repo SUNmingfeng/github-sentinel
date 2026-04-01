@@ -2,7 +2,7 @@ package handler
 
 import (
 "github.com/gin-gonic/gin"
-"github.com/yourname/github-sentinel/internal/service"
+"github.com/SUNmingfeng/github-sentinel/internal/service"
 )
 
 type SubscriptionHandler struct {
