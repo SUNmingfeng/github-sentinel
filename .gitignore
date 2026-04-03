@@ -16,3 +16,7 @@ bin/
 
 # Config
 .env
+
+# Report
+reports/
+daily/
