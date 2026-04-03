@@ -5,6 +5,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/SUNmingfeng/github-sentinel/internal/daily"
+	"github.com/SUNmingfeng/github-sentinel/internal/llm"
+	"github.com/SUNmingfeng/github-sentinel/internal/reporter"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,6 +24,7 @@ type GitHubSentinel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	githubClient  *github.Client
+	llmClient     *llm.DeepSeekClient
 	repoService   *service.RepoService
 	scheduler     *scheduler.Scheduler
 	aggregator    *aggregator.Aggregator
@@ -35,6 +39,16 @@ func NewGitHubSentinel(token string) *GitHubSentinel {
 		BaseURL: "",
 	})
 
+	dpApiKey := os.Getenv("DEEPSEEK_API_KEY")
+	cfg := llm.Config{
+		APIKey: dpApiKey,
+		Model:  "deepseek-chat",
+	}
+	llmClient, err := llm.NewDeepSeekClient(cfg)
+	if err != nil {
+		panic(err)
+	}
+
 	repoService := service.NewRepoService(githubClient)
 	sched := scheduler.NewScheduler(repoService)
 	agg := aggregator.NewAggregator()
@@ -43,6 +57,7 @@ func NewGitHubSentinel(token string) *GitHubSentinel {
 		ctx:           ctx,
 		cancel:        cancel,
 		githubClient:  githubClient,
+		llmClient:     llmClient,
 		repoService:   repoService,
 		scheduler:     sched,
 		aggregator:    agg,
@@ -148,6 +163,22 @@ func (gs *GitHubSentinel) startConsole() {
 			gs.scheduler.Stop()
 			os.Exit(0)
 
+		case "daily", "progress":
+			if len(parts) < 2 {
+				fmt.Println("Usage: daily <owner/repo>")
+				continue
+			}
+			repoName := parts[1]
+			gs.generateDailyProgress(repoName)
+
+		case "aireport", "ai":
+			if len(parts) < 2 {
+				fmt.Println("Usage: aireport <owner/repo>")
+				continue
+			}
+			repoName := parts[1]
+			gs.generateAIReport(repoName)
+
 		default:
 			fmt.Printf("Unknown command: %s\n", cmd)
 			gs.printHelp()
@@ -189,6 +220,15 @@ func (gs *GitHubSentinel) subscribe(repoName, frequency string) {
 	// 添加到订阅列表
 	gs.subscriptions[repoName] = frequency
 	fmt.Printf("✓ Subscribed to %s (%s updates)\n", repoName, frequency)
+
+	// 可选：立即生成每日进展
+	fmt.Printf("✓ Subscribed to %s (%s updates)\n", repoName, frequency)
+	fmt.Print("Generate daily progress now? (y/n): ")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	if strings.ToLower(scanner.Text()) == "y" {
+		gs.generateDailyProgress(repoName)
+	}
 }
 
 func (gs *GitHubSentinel) unsubscribe(repoName string) {
@@ -302,14 +342,16 @@ func (gs *GitHubSentinel) clearScreen() {
 }
 
 func (gs *GitHubSentinel) printHelp() {
-	fmt.Println("\nGitHub Sentinel - Interactive Console")
-	fmt.Println("=====================================")
+	fmt.Println("\nGitHub Sentinel - Interactive Console (v0.2)")
+	fmt.Println("============================================")
 	fmt.Println("Commands:")
 	fmt.Println("  subscribe <owner/repo> [daily|weekly]  - Subscribe to a repository")
 	fmt.Println("  unsubscribe <owner/repo>               - Unsubscribe from a repository")
 	fmt.Println("  list, ls                               - List all subscriptions")
 	fmt.Println("  fetch <owner/repo> [days]              - Fetch updates immediately")
 	fmt.Println("  fetch-all [days]                       - Fetch all subscriptions")
+	fmt.Println("  daily <owner/repo>                     - Generate daily progress report")
+	fmt.Println("  aireport <owner/repo>                  - Generate AI-powered report (v0.2)")
 	fmt.Println("  status, stat                           - Show system status")
 	fmt.Println("  clear                                  - Clear screen")
 	fmt.Println("  help, h, ?                             - Show this help")
@@ -317,12 +359,12 @@ func (gs *GitHubSentinel) printHelp() {
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  subscribe langchain-ai/langchain daily")
-	fmt.Println("  subscribe kubernetes/kubernetes weekly")
+	fmt.Println("  daily langchain-ai/langchain")
 	fmt.Println("  fetch langchain-ai/langchain 7")
-	fmt.Println("  fetch-all 3")
-	fmt.Println("  list")
 	fmt.Println("")
-	fmt.Println("Note: Scheduled reports are automatically saved to reports/ directory")
+	fmt.Println("v0.2 New Features:")
+	fmt.Println("  • Daily progress reports with issues and PRs")
+	fmt.Println("  • AI-powered summaries (requires DEEPSEEK_API_KEY)")
 }
 
 func main() {
@@ -365,4 +407,23 @@ func parseRepoFullName(fullName string) (owner, repo string) {
 		return parts[0], parts[1]
 	}
 	return "", fullName
+}
+
+func (gs *GitHubSentinel) generateDailyProgress(repoName string) {
+	daily := daily.NewDailyProgress(gs.githubClient, "daily")
+	if err := daily.GenerateDailyReport(gs.ctx, repoName); err != nil {
+		fmt.Printf("Error generating daily progress: %v\n", err)
+	}
+}
+
+func (gs *GitHubSentinel) generateAIReport(repoName string) {
+	if gs.llmClient == nil {
+		fmt.Println("DeepSeek client not configured. Please set DEEPSEEK_API_KEY environment variable.")
+		return
+	}
+
+	reporter := reporter.NewReporter(gs.githubClient, gs.llmClient, "daily", "reports")
+	if err := reporter.GenerateAIDailyReport(gs.ctx, repoName); err != nil {
+		fmt.Printf("Error generating AI report: %v\n", err)
+	}
 }

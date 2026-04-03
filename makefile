@@ -9,7 +9,10 @@ help:
 
 run:
 	@echo "Starting GitHub Sentinel interactive console..."
-	@export GITHUB_TOKEN=$(GITHUB_TOKEN); go run cmd/server/main.go
+	@export GITHUB_TOKEN=$(GITHUB_TOKEN); \
+	 export DEEPSEEK_API_KEY=$(DEEPSEEK_API_KEY); \
+	 go run cmd/server/main.go
+
 
 monitor:
 	@echo "Running one-time monitor for langchain-ai/langchain..."
@@ -24,3 +27,21 @@ build:
 clean:
 	@echo "Cleaning..."
 	@rm -rf bin/ data/ *.md
+
+test-ai:
+	@echo "Testing AI report generation..."
+	@export GITHUB_TOKEN=$(GITHUB_TOKEN); \
+	 export DEEPSEEK_API_KEY=$(DEEPSEEK_API_KEY); \
+	 go run cmd/monitor/main.go -ai
+
+
+daily:
+	@echo "Generating daily progress for langchain-ai/langchain..."
+	@export GITHUB_TOKEN=$(GITHUB_TOKEN); \
+	 go run cmd/monitor/main.go -mode=daily -repo=langchain-ai/langchain
+
+ai-report:
+	@echo "Generating AI report for langchain-ai/langchain..."
+	@export GITHUB_TOKEN=$(GITHUB_TOKEN); \
+	 export DEEPSEEK_API_KEY=$(DEEPSEEK_API_KEY); \
+	 go run cmd/monitor/main.go -mode=ai -repo=langchain-ai/langchain
